@@ -8,8 +8,10 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletRequestWrapper;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.util.Enumeration;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.function.Consumer;
 
 public class SpringRequestWrapper extends HttpServletRequestWrapper {
 
@@ -25,7 +27,7 @@ public class SpringRequestWrapper extends HttpServletRequestWrapper {
     }
 
     @Override
-    public ServletInputStream getInputStream() throws IOException {
+    public ServletInputStream getInputStream() {
         return new ServletInputStream() {
             public boolean isFinished() {
                 return false;
@@ -42,15 +44,19 @@ public class SpringRequestWrapper extends HttpServletRequestWrapper {
             ByteArrayInputStream byteArray = new ByteArrayInputStream(body);
 
             @Override
-            public int read() throws IOException {
+            public int read() {
                 return byteArray.read();
             }
         };
     }
 
+    private static <T> void forEachRemaining(Enumeration<T> e, Consumer<? super T> c) {
+        while(e.hasMoreElements()) c.accept(e.nextElement());
+    }
+
     public Map<String, String> getAllHeaders() {
         final Map<String, String> headers = new HashMap<>();
-        getHeaderNames().asIterator().forEachRemaining(it -> headers.put(it, getHeader(it)));
+        forEachRemaining(getHeaderNames(), it -> headers.put(it, getHeader(it)));
         return  headers;
     }
 }
