@@ -15,7 +15,6 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.http.client.ClientHttpRequestInterceptor;
 import org.springframework.web.client.RestTemplate;
-
 import pl.piomin.logging.client.RestTemplateSetHeaderInterceptor;
 import pl.piomin.logging.filter.SpringLoggingFilter;
 import pl.piomin.logging.util.UniqueIDGenerator;
@@ -23,7 +22,6 @@ import pl.piomin.logging.util.UniqueIDGenerator;
 import javax.annotation.PostConstruct;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Optional;
 
 @Configuration
 public class SpringLoggingAutoConfiguration {
@@ -34,12 +32,12 @@ public class SpringLoggingAutoConfiguration {
 	String url;
 	@Value("${spring.application.name:-}")
 	String name;
-	@Value("${spring.logstash.ssl.trustStoreLocation:#{null}}")
-	Optional<String> trustStoreLocation;
-	@Value("${spring.logstash.ssl.trustStorePassword:#{null}}")
-	Optional<String> trustStorePassword;
+	@Value("${spring.logstash.ssl.trustStoreLocation:null}")
+	String trustStoreLocation;
+	@Value("${spring.logstash.ssl.trustStorePassword:null}")
+	String trustStorePassword;
 	@Autowired(required = false)
-	Optional<RestTemplate> template;
+	RestTemplate template;
 
 	@Bean
 	public UniqueIDGenerator generator() {
@@ -55,7 +53,7 @@ public class SpringLoggingAutoConfiguration {
 	@ConditionalOnMissingBean(RestTemplate.class)
 	public RestTemplate restTemplate() {
 		RestTemplate restTemplate = new RestTemplate();
-		List<ClientHttpRequestInterceptor> interceptorList = new ArrayList<ClientHttpRequestInterceptor>();
+		List<ClientHttpRequestInterceptor> interceptorList = new ArrayList<>();
 		interceptorList.add(new RestTemplateSetHeaderInterceptor());
 		restTemplate.setInterceptors(interceptorList);
 		return restTemplate;
@@ -69,14 +67,16 @@ public class SpringLoggingAutoConfiguration {
 		logstashTcpSocketAppender.setName(LOGSTASH_APPENDER_NAME);
 		logstashTcpSocketAppender.setContext(loggerContext);
 		logstashTcpSocketAppender.addDestination(url);
-		trustStoreLocation.ifPresent(it -> {
+		if (trustStoreLocation != null) {
 			SSLConfiguration sslConfiguration = new SSLConfiguration();
 			KeyStoreFactoryBean factory = new KeyStoreFactoryBean();
-			factory.setLocation(it);
-			trustStorePassword.ifPresent(factory::setPassword);
+			factory.setLocation(trustStoreLocation);
+			if (trustStorePassword != null) {
+				factory.setPassword(trustStorePassword);
+			}
 			sslConfiguration.setTrustStore(factory);
 			logstashTcpSocketAppender.setSsl(sslConfiguration);
-		});
+		}
 		LogstashEncoder encoder = new LogstashEncoder();
 		encoder.setContext(loggerContext);
 		encoder.setIncludeContext(true);
@@ -90,11 +90,11 @@ public class SpringLoggingAutoConfiguration {
 
 	@PostConstruct
 	public void init() {
-		template.ifPresent(restTemplate -> {
-			List<ClientHttpRequestInterceptor> interceptorList = new ArrayList<ClientHttpRequestInterceptor>();
+		if (template != null) {
+			List<ClientHttpRequestInterceptor> interceptorList = new ArrayList<>();
 			interceptorList.add(new RestTemplateSetHeaderInterceptor());
-			restTemplate.setInterceptors(interceptorList);
-		});
+			template.setInterceptors(interceptorList);
+		}
 	}
 
 }

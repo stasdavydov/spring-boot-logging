@@ -16,7 +16,7 @@ public class SpringResponseWrapper extends HttpServletResponseWrapper {
 	private PrintWriter writer;
 	private ServletOutputStreamWrapper copier;
 
-	public SpringResponseWrapper(HttpServletResponse response) throws IOException {
+	public SpringResponseWrapper(HttpServletResponse response) {
 		super(response);
 	}
 

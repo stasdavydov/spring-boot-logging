@@ -1,5 +1,7 @@
 package pl.piomin.logging.filter;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.ObjectWriter;
 import org.apache.commons.io.IOUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,17 +17,14 @@ import javax.servlet.ServletException;
 import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.Optional;
-
-import static net.logstash.logback.argument.StructuredArguments.value;
 
 public class SpringLoggingFilter extends OncePerRequestFilter {
-
+    private static final ObjectWriter MESSAGE_WRITER = new ObjectMapper().writerFor(LoggingMessage.class);
     private static final Logger LOGGER = LoggerFactory.getLogger(SpringLoggingFilter.class);
     private UniqueIDGenerator generator;
 
-    @Value("${spring.logging.ignorePatterns:#{null}}")
-    Optional<String> ignorePatterns;
+    @Value("${spring.logging.ignorePatterns:null}")
+    String ignorePatterns;
     @Value("${spring.logging.includeHeaders:false}")
     boolean logHeaders;
 
@@ -34,43 +33,50 @@ public class SpringLoggingFilter extends OncePerRequestFilter {
     }
 
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain) throws ServletException, IOException {
-        if (ignorePatterns.isPresent() && request.getRequestURI().matches(ignorePatterns.get())) {
+        if (ignorePatterns != null && request.getRequestURI().matches(ignorePatterns)) {
             chain.doFilter(request, response);
         } else {
             generator.generateAndSetMDC(request);
             final long startTime = System.currentTimeMillis();
             final SpringRequestWrapper wrappedRequest = new SpringRequestWrapper(request);
-            if (logHeaders)
-                LOGGER.info("Request: method={}, uri={}, payload={}, headers={}", wrappedRequest.getMethod(),
-                        wrappedRequest.getRequestURI(), IOUtils.toString(wrappedRequest.getInputStream(),
-                        wrappedRequest.getCharacterEncoding()), wrappedRequest.getAllHeaders());
-            else
-                LOGGER.info("Request: method={}, uri={}, payload={}", wrappedRequest.getMethod(),
-                        wrappedRequest.getRequestURI(), IOUtils.toString(wrappedRequest.getInputStream(),
-                        wrappedRequest.getCharacterEncoding()));
             final SpringResponseWrapper wrappedResponse = new SpringResponseWrapper(response);
             wrappedResponse.setHeader("X-Request-ID", MDC.get("X-Request-ID"));
             wrappedResponse.setHeader("X-Correlation-ID", MDC.get("X-Correlation-ID"));
+            Exception error = null;
             try {
                 chain.doFilter(wrappedRequest, wrappedResponse);
             } catch (Exception e) {
-                logResponse(startTime, wrappedResponse, 500);
+                error = e;
                 throw e;
+            } finally {
+                log(startTime, wrappedRequest, wrappedResponse, error);
             }
-            logResponse(startTime, wrappedResponse, wrappedResponse.getStatus());
         }
     }
 
-    private void logResponse(long startTime, SpringResponseWrapper wrappedResponse, int overriddenStatus) throws IOException {
-        final long duration = System.currentTimeMillis() - startTime;
-        if (logHeaders)
-            LOGGER.info("Response({} ms): status={}, payload={}, headers={}", value("X-Response-Time", duration),
-                    value("X-Response-Status", overriddenStatus), IOUtils.toString(wrappedResponse.getContentAsByteArray(),
-                            wrappedResponse.getCharacterEncoding()), wrappedResponse.getAllHeaders());
-        else
-            LOGGER.info("Response({} ms): status={}, payload={}", value("X-Response-Time", duration),
-                    value("X-Response-Status", overriddenStatus),
-                    IOUtils.toString(wrappedResponse.getContentAsByteArray(), wrappedResponse.getCharacterEncoding()));
+    private String prepareLoggingMessage(long startTime, SpringRequestWrapper request, SpringResponseWrapper response,
+                                         Exception exception) throws IOException {
+        LoggingMessage message = new LoggingMessage()
+                .withRemoteIp(request.getRemoteAddr())
+                .withMethod(request.getMethod())
+                .withPath(request.getRequestURI())
+                .withRequestId(MDC.get("X-Request-ID"))
+                .withRequestParams(request.getQueryString())
+                .withRequestBody(IOUtils.toString(request.getInputStream(), request.getCharacterEncoding()))
+                .withResponseStatus(response.getStatus())
+                .withResponseBody(IOUtils.toString(response.getContentAsByteArray(), response.getCharacterEncoding()))
+                .withDuration(System.currentTimeMillis() - startTime)
+                .withException(exception);
+        if (logHeaders) {
+            message.setRequestHeaders(request.getAllHeaders());
+            message.setResponseHeaders(response.getAllHeaders());
+        }
+        return MESSAGE_WRITER.writeValueAsString(message);
+    }
+
+    private void log(long startTime, SpringRequestWrapper requestWrapper, SpringResponseWrapper wrappedResponse,
+                     Exception exception) throws IOException {
+        LOGGER.info(prepareLoggingMessage(startTime, requestWrapper, wrappedResponse, exception));
     }
 
 }
